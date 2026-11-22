@@ -46,6 +46,10 @@
 		FOLLOW_UP_MAX_REMINDERS: 1
 	});
 
+	let hasWebhookSecret = $state(false);
+	let editingSecret = $state(false);
+	let newWebhookSecret = $state('');
+
 	let isNew = $derived(id === 'new');
 
 	async function loadInbox() {
@@ -63,6 +67,9 @@
 			assignedAgentBotId = record.assigned_agent_bot_id || null;
 			const cfg = typeof record.config === 'string' ? JSON.parse(record.config) : (record.config || {});
 			config = { ...config, ...cfg };
+			// The CRM secret is stored encrypted and is write-only: never load its
+			// value into the page, only remember that one is configured.
+			hasWebhookSecret = !!(cfg.crmWebhookSecret || '');
 			// Load agent bots for assignment
 			try {
 				const resp = await botFetch(`/api/agent_bots`);
@@ -94,12 +101,35 @@
 		void channelType;
 		void active;
 		void assignedAgentBotId;
+		void editingSecret;
 
 		if (!loaded || isNew) return;
+		// While a secret edit is in progress, don't auto-save — the secret change
+		// is only applied on an explicit Save.
+		if (editingSecret) return;
 		if (skipNextAutoSave) { skipNextAutoSave = false; return; }
 		if (autoSaveTimer) clearTimeout(autoSaveTimer);
 		autoSaveTimer = setTimeout(() => save(true), 2000);
 	});
+
+	async function encryptForStorage(value: string): Promise<string> {
+		// The browser never holds ENCRYPTION_KEY — ask the bot-service (the only
+		// process with the key) to encrypt the value before it is persisted.
+		const resp = await botFetch(`/api/settings/encrypt`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ value })
+		});
+		if (!resp.ok) {
+			const d = await resp.json().catch(() => ({}));
+			throw new Error(d.error || `Encryption failed (${resp.status})`);
+		}
+		const data = await resp.json();
+		if (data.mode === 'plaintext') {
+			console.warn('ENCRYPTION_KEY is not set on the bot-service — CRM secret will be stored in plaintext.');
+		}
+		return data.encrypted;
+	}
 
 	async function save(silent = false) {
 		saving = true;
@@ -107,6 +137,18 @@
 		if (!silent) success = '';
 		if (!id) return;
 		try {
+			// CRM secret handling: applied on save, only when the user edited it.
+			if (editingSecret) {
+				if (newWebhookSecret.trim()) {
+					config.crmWebhookSecret = await encryptForStorage(newWebhookSecret.trim());
+					hasWebhookSecret = true;
+				} else {
+					config.crmWebhookSecret = '';
+					hasWebhookSecret = false;
+				}
+				newWebhookSecret = '';
+				editingSecret = false;
+			}
 			const data = {
 				name,
 				chatwoot_inbox_id: chatwootInboxId,
@@ -857,7 +899,16 @@
 								</div>
 								<div class="form-control gap-1">
 									<span class="text-xs opacity-70">CRM Secret</span>
-									<input class="input input-bordered input-sm" type="password" bind:value={config.crmWebhookSecret} placeholder="Shared secret" />
+									{#if hasWebhookSecret && !editingSecret}
+										<div class="flex gap-2">
+											<input class="input input-bordered input-sm flex-1" type="password" disabled value="••••••••••" />
+											<button class="btn btn-outline btn-sm" type="button" onclick={() => { newWebhookSecret = ''; editingSecret = true; }}>Change</button>
+											<button class="btn btn-outline btn-sm" type="button" onclick={() => { config.crmWebhookSecret = ''; hasWebhookSecret = false; editingSecret = false; newWebhookSecret = ''; }}>Remove</button>
+										</div>
+										<p class="text-[11px] opacity-60">Stored encrypted at rest — write-only, cannot be viewed. Change to replace it, Remove to delete it.</p>
+									{:else}
+										<input class="input input-bordered input-sm" type="password" bind:value={newWebhookSecret} placeholder="Shared secret (leave empty to remove)" />
+									{/if}
 								</div>
 							</div>
 							<p class="text-[11px] opacity-60">Still forwarded on form submit if set — Chatwoot's own webhooks usually cover this; keep it only if you really need it.</p>

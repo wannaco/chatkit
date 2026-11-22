@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { decryptSecret, encryptSecret, isEncrypted, isEncryptionEnabled } from './crypto.js';
 
 const PB_URL = process.env.PB_URL || 'http://localhost:8090';
 const PB_SERVICE_TOKEN = process.env.PB_SERVICE_TOKEN || '';
@@ -24,6 +25,29 @@ async function getAuthToken() {
   return authToken;
 }
 
+/**
+ * One-time migration: if `raw` is a legacy plaintext secret and encryption is
+ * enabled, encrypt it and persist via `persist(encrypted)` so nothing
+ * sensitive stays at rest. Returns the value to use from now on (encrypted
+ * when migrated, the original otherwise).
+ */
+async function migratePlaintext(raw, persist) {
+  if (!raw || isEncrypted(raw) || !isEncryptionEnabled()) return raw;
+  try {
+    const encrypted = encryptSecret(raw);
+    await persist(encrypted);
+    console.warn('[configLoader] Migrated plaintext secret to encrypted storage');
+    return encrypted;
+  } catch (e) {
+    console.warn('[configLoader] Failed to migrate plaintext secret (continuing with legacy value):', e.message);
+    return raw;
+  }
+}
+
+function authHeaders(token) {
+  return token ? { Authorization: token } : {};
+}
+
 export async function getConfig(chatwootInboxId, channel) {
   const cacheKey = `${chatwootInboxId}:${channel}`;
   const cached = cache.get(cacheKey);
@@ -35,7 +59,7 @@ export async function getConfig(chatwootInboxId, channel) {
   const filter = encodeURIComponent(`chatwoot_inbox_id=${chatwootInboxId}`);
   const url = `${PB_URL}/api/collections/inboxes/records?filter=${filter}`;
   const resp = await axios.get(url, {
-    headers: token ? { Authorization: token } : {}
+    headers: authHeaders(token)
   });
 
   const records = resp.data?.items || [];
@@ -45,6 +69,19 @@ export async function getConfig(chatwootInboxId, channel) {
 
   const record = records[0];
   const configJson = typeof record.config === 'string' ? JSON.parse(record.config) : (record.config || {});
+
+  // Per-inbox CRM webhook secret: decrypt for use, and one-time migrate any
+  // legacy plaintext value to encrypted storage.
+  if (configJson.crmWebhookSecret) {
+    configJson.crmWebhookSecret = await migratePlaintext(configJson.crmWebhookSecret, async (encrypted) => {
+      await axios.patch(
+        `${PB_URL}/api/collections/inboxes/records/${record.id}`,
+        { config: { ...configJson, crmWebhookSecret: encrypted } },
+        { headers: authHeaders(token) }
+      );
+    });
+    configJson.crmWebhookSecret = decryptSecret(configJson.crmWebhookSecret);
+  }
 
   const settings = await getSettings();
 
@@ -70,14 +107,24 @@ export async function getSettings() {
   const token = await getAuthToken();
   const url = `${PB_URL}/api/collections/settings/records`;
   const resp = await axios.get(url, {
-    headers: token ? { Authorization: token } : {}
+    headers: authHeaders(token)
   });
   const records = resp.data?.items || [];
   if (records.length === 0) return null;
   const r = records[0];
+
+  let rawToken = r.chatwoot_api_token || '';
+  rawToken = await migratePlaintext(rawToken, async (encrypted) => {
+    await axios.patch(
+      `${PB_URL}/api/collections/settings/records/${r.id}`,
+      { chatwoot_api_token: encrypted },
+      { headers: authHeaders(token) }
+    );
+  });
+
   return {
     chatwoot_base_url: r.chatwoot_base_url,
-    chatwoot_api_token: r.chatwoot_api_token,
+    chatwoot_api_token: decryptSecret(rawToken),
     chatwoot_account_id: r.chatwoot_account_id
   };
 }

@@ -18,7 +18,7 @@ ChatKit stores a Chatwoot **administrator access token**. When reporting, please
 **never include**:
 
 - Chatwoot access tokens, PocketBase auth tokens or superuser passwords
-- your `WEBHOOK_SECRET`, or webhook URLs that contain it
+- your `WEBHOOK_SECRET` or `ENCRYPTION_KEY`, or webhook URLs that contain the secret
 - customer messages, contact details or conversation exports from a live instance
 - PocketBase backups (`pb_data`): they contain the Chatwoot token
 
@@ -31,6 +31,7 @@ without authentication" is as useful as the token itself.
 |---|---|
 | bot-service `/api/*` | runs Chatwoot admin actions with the stored token; must require a builder session |
 | bot-service `/webhook/*` | forged events, secret bypass, getting the bot to message arbitrary conversations |
+| Secret encryption (`ENCRYPTION_KEY`, `/api/settings/encrypt`) | weak crypto, key or plaintext leaking to the browser or logs, decrypt oracles |
 | PocketBase rules and migrations | reading `settings` (the token) or `inboxes` without a session, self-registration |
 | Builder UI | XSS through menu content or Chatwoot data, token leakage |
 | The container images and compose files | default exposures, published ports, default credentials |

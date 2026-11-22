@@ -39,6 +39,7 @@ services:
       PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:-changeme-dev-only}
       BOT_SERVICE_URL: ${BOT_SERVICE_URL:-http://localhost:8080}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
     depends_on:
       pocketbase:
         condition: service_healthy

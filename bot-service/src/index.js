@@ -8,6 +8,7 @@ import { createTelegramAdapter } from './adapters/telegram.js';
 import { getConfig, getSettings } from './configLoader.js';
 import { scheduleFollowUp, cancelFollowUp } from './followUpManager.js';
 import { requireBuilderAuth, requireWebhookSecret, buildWebhookUrl } from './auth.js';
+import { encryptSecret, isEncrypted, isEncryptionEnabled } from './crypto.js';
 
 const app = express();
 app.use(cors());
@@ -257,7 +258,34 @@ app.post('/api/assign_agent_bot', async (req, res) => {
   }
 });
 
+// ─── Secret encryption ────────────────────────────────────────────────────
+// The builder-ui is a client-side SPA and must NEVER hold ENCRYPTION_KEY.
+// It calls this endpoint to encrypt sensitive values before persisting them
+// to PocketBase. There is deliberately NO decrypt endpoint — decryption only
+// happens in-process inside this service (configLoader).
+app.post('/api/settings/encrypt', (req, res) => {
+  try {
+    const { value } = req.body || {};
+    if (typeof value !== 'string') {
+      return res.status(400).json({ error: 'value must be a string' });
+    }
+    if (value.length > 2000) {
+      return res.status(400).json({ error: 'value too long (max 2000 chars)' });
+    }
+    const encrypted = encryptSecret(value);
+    res.json({
+      encrypted,
+      mode: isEncrypted(encrypted) ? 'encrypted' : 'plaintext'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`ChatKit bot-service listening on port ${PORT}`);
+  if (!isEncryptionEnabled()) {
+    console.warn('⚠ ENCRYPTION_KEY is NOT set — sensitive values (Chatwoot API token, webhook secrets) will be stored in PLAINTEXT. Set ENCRYPTION_KEY in the deployment env to enable encryption at rest.');
+  }
 });

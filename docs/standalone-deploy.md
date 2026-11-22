@@ -54,6 +54,7 @@ Edit `.env`:
 | `DOMAIN` | Your ChatKit domain. Point its A record at the server first. |
 | `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | The PocketBase superuser. Created (or its password reset) on every start, and your first builder login. |
 | `WEBHOOK_SECRET` | Recommended. `openssl rand -hex 24`. Webhooks without it are refused. |
+| `ENCRYPTION_KEY` | Strongly recommended, set it **before** step 4. `openssl rand -hex 32`. Encrypts the Chatwoot token and CRM webhook secrets at rest (AES-256-GCM). Keep a copy: without it, stored secrets can't be decrypted and must be re-entered. |
 
 Your Chatwoot URL and API token are **not** in `.env`. You enter them in the
 builder in step 4, and they are stored in PocketBase.
@@ -85,7 +86,8 @@ curl -s https://chatkit.example.com/health        # {"status":"ok",…}
    must belong to an **administrator**, because creating agent bots requires it.
 3. Note your Chatwoot **account ID**: the number in `/app/accounts/<id>/…`.
 4. In the builder, go to **Settings** and enter the Chatwoot base URL, account ID
-   and access token. Save.
+   and access token. Save. The token is **write-only**: it is stored encrypted
+   and can be replaced or removed, never shown again.
 
 ## 5. Build a menu and attach it to an inbox
 
@@ -137,7 +139,8 @@ Nightly via cron:
 0 3 * * * cd /opt/chatkit/deploy && ./backup.sh >> /var/log/chatkit-backup.log 2>&1
 ```
 
-The archive contains the Chatwoot API token, so store it like a password.
+The archive contains the Chatwoot API token (encrypted if `ENCRYPTION_KEY` is
+set). Back up `.env` separately: a restore needs the same `ENCRYPTION_KEY`.
 
 Restore:
 

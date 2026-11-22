@@ -63,7 +63,7 @@ point:
 | Path | Goes to |
 |---|---|
 | `/api/collections/…`, `/api/files/…`, `/api/realtime`, `/api/health`, `/_/` | `pocketbase:8090` |
-| `/api/…` (other), `/webhook/…`, `/health` | `bot-service:3001` |
+| `/api/…` (other, incl. `/api/settings/encrypt`), `/webhook/…`, `/health` | `bot-service:3001` |
 | everything else | the builder app (static SvelteKit) |
 
 | Service | Stack | Role |
@@ -79,7 +79,13 @@ point:
 - Public sign-up is disabled. Builder users are added by the superuser at `/_/`.
 - Chatwoot does not sign agent-bot webhooks. Set `WEBHOOK_SECRET` so
   bot-service rejects webhook calls that do not carry it.
-- PocketBase backups contain the Chatwoot token. Store them like passwords.
+- **Secrets are encrypted at rest** (AES-256-GCM) when `ENCRYPTION_KEY` is set:
+  the Chatwoot token and CRM webhook secrets. The key exists only on
+  bot-service; the builder asks bot-service to encrypt values before saving
+  and there is no decrypt endpoint. Tokens are write-only in the UI. Plaintext
+  values saved before the key was set are re-encrypted automatically.
+- Keep `ENCRYPTION_KEY` with your backups: without it, stored secrets must be
+  re-entered.
 
 Reporting a vulnerability: see [SECURITY.md](SECURITY.md).
 

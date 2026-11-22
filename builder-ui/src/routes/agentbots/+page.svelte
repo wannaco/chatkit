@@ -12,6 +12,8 @@
 	let showCreateForm = $state(false);
 	let creating = $state(false);
 	let editingBot = $state<any | null>(null);
+	// AgentBot tokens are hidden by default — only shown on an explicit click.
+	let revealedTokens = $state<Record<string, boolean>>({});
 
 	let formData = $state({ name: '', description: '', outgoingUrl: '', avatarUrl: '' });
 
@@ -214,7 +216,13 @@
 												<div class="grid grid-cols-1 gap-1 text-xs text-base-content/70">
 													<div><span class="font-semibold">ID:</span> {bot.id}</div>
 													{#if bot.outgoing_url}<div><span class="font-semibold">Webhook:</span> <code class="text-xs bg-base-200 px-1 rounded">{bot.outgoing_url}</code></div>{/if}
-													{#if bot.access_token}<div><span class="font-semibold">Token:</span> <code class="text-xs bg-base-200 px-1 rounded blur hover:blur-none transition-all cursor-pointer">{bot.access_token}</code></div>{/if}
+													{#if bot.access_token}
+														<div class="flex items-center gap-1">
+															<span class="font-semibold">Token:</span>
+															<code class="text-xs bg-base-200 px-1 rounded">{revealedTokens[bot.id] ? bot.access_token : '••••••••••'}</code>
+															<button class="btn btn-ghost btn-xs" type="button" title={revealedTokens[bot.id] ? 'Hide token' : 'Reveal token'} onclick={() => revealedTokens[bot.id] = !revealedTokens[bot.id]}>{revealedTokens[bot.id] ? '🙈' : '👁️'}</button>
+														</div>
+													{/if}
 												</div>
 											</div>
 											<div class="flex gap-1">

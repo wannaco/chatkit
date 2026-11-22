@@ -1,0 +1,67 @@
+name: build-push
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  IMAGE_PREFIX: ghcr.io/wannaco/chatkit
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: bot-service tests
+        working-directory: bot-service
+        run: npm ci && npm test
+      - name: builder-ui build
+        working-directory: builder-ui
+        run: npm ci && npm run build
+
+  build-and-push:
+    needs: test
+    # Images are published from main only; PRs just run the tests above.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [pocketbase, bot-service, builder-ui]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The builder serves the notices at /THIRD_PARTY_NOTICES.txt (they must
+      # ship with the bundled Svelte/xyflow code). Its build context is
+      # builder-ui/, so copy the root file in first.
+      - name: Add third-party notices to builder-ui
+        if: matrix.service == 'builder-ui'
+        run: cp THIRD_PARTY_NOTICES.md builder-ui/static/THIRD_PARTY_NOTICES.txt
+      # amd64 only for now. The pocketbase Dockerfile already takes TARGETARCH,
+      # so adding linux/arm64 here is the only change needed when wanted.
+      # :latest follows main; the SHA tag is a real pin (CHATKIT_TAG=<sha>).
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service }}
+          push: true
+          platforms: linux/amd64
+          labels: |
+            org.opencontainers.image.source=https://github.com/wannaco/chatkit
+            org.opencontainers.image.licenses=LicenseRef-PolyForm-Internal-Use-1.0.0
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}

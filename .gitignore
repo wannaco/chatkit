@@ -1,0 +1,7 @@
+# secrets and local state
+.env
+deploy/.env
+deploy/backups/
+pb_data/
+node_modules/
+.DS_Store

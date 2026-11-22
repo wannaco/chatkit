@@ -1,0 +1,78 @@
+# =============================================================================
+# ChatKit — standalone server (you already have Chatwoot) + automatic HTTPS
+#
+#   cp .env.example .env      # then edit DOMAIN, PB_ADMIN_*, WEBHOOK_SECRET
+#   docker compose up -d
+#
+# Pulls the published images — no build step. Caddy obtains and renews a
+# Let's Encrypt certificate for $DOMAIN (ports 80 + 443 must be reachable) and
+# hands everything to builder-ui, whose nginx routes /api, /_ and /webhook to
+# pocketbase and bot-service. One domain, one entry point.
+#
+# Other layouts (same folder):
+#   docker-compose.traefik.yml  something else already terminates TLS (Dokploy, Traefik, Coolify…)
+#   docker-compose.full.yml     installs Chatwoot too (Rails + Sidekiq + Postgres + Redis)
+#   docker-compose.dev.yml      build from source on your machine, no TLS
+# =============================================================================
+
+x-chatkit-image: &pull
+  # MANDATORY with a moving tag like :latest. Compose's default (missing) only
+  # pulls when the image is absent, so `up -d` would silently keep old images.
+  pull_policy: always
+  restart: unless-stopped
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - builder-ui
+
+  pocketbase:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/pocketbase:${CHATKIT_TAG:-latest}
+    environment:
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:?set PB_ADMIN_EMAIL in .env}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?set PB_ADMIN_PASSWORD in .env}
+    volumes:
+      - pb_data:/pb_data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  bot-service:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/bot-service:${CHATKIT_TAG:-latest}
+    environment:
+      PORT: "3001"
+      PB_URL: http://pocketbase:8090
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD}
+      BOT_SERVICE_URL: ${BOT_SERVICE_URL:-https://${DOMAIN}}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+
+  builder-ui:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/builder-ui:${CHATKIT_TAG:-latest}
+    depends_on:
+      - pocketbase
+      - bot-service
+
+volumes:
+  pb_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,12 @@
+# Caddy — automatic HTTPS for ChatKit + Chatwoot (docker-compose.full.yml).
+# Both domains come from .env and must point at this server.
+
+{$CHATWOOT_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy chatwoot-rails:3000
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy builder-ui:80
+}

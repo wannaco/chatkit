@@ -1,0 +1,56 @@
+# =============================================================================
+# ChatKit — local development / evaluation, built from source, no TLS
+#
+#   cp .env.example .env      # PB_ADMIN_EMAIL / PB_ADMIN_PASSWORD are enough
+#   docker compose -f docker-compose.dev.yml up -d --build
+#
+# Builder:    http://localhost:8080   (log in with PB_ADMIN_EMAIL / PB_ADMIN_PASSWORD)
+# PocketBase: http://localhost:8080/_/
+# Webhooks:   http://localhost:8080/webhook/<channel>?inboxId=<id>
+#
+# Bound to 127.0.0.1 only. Chatwoot must be able to reach the webhook URL, so
+# for a Chatwoot on another machine use a tunnel (and set BOT_SERVICE_URL to
+# the tunnel URL) or one of the other compose files.
+# =============================================================================
+
+services:
+  pocketbase:
+    build: ../pocketbase
+    restart: unless-stopped
+    environment:
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:-admin@example.com}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:-changeme-dev-only}
+    volumes:
+      - pb_data_dev:/pb_data
+      - ../pocketbase/migrations:/pb_migrations
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bot-service:
+    build: ../bot-service
+    restart: unless-stopped
+    environment:
+      PORT: "3001"
+      PB_URL: http://pocketbase:8090
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:-admin@example.com}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:-changeme-dev-only}
+      BOT_SERVICE_URL: ${BOT_SERVICE_URL:-http://localhost:8080}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+
+  builder-ui:
+    build: ../builder-ui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - pocketbase
+      - bot-service
+
+volumes:
+  pb_data_dev:

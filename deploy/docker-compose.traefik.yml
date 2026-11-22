@@ -1,0 +1,71 @@
+# =============================================================================
+# ChatKit — for a platform that ALREADY terminates TLS
+#
+# Use this when something else owns ports 80/443 and routes to containers by
+# name: Dokploy, Traefik, Coolify, an existing nginx/Caddy, a Kubernetes ingress…
+#
+#   cp .env.example .env      # DOMAIN is only used for BOT_SERVICE_URL here
+#   docker compose -f docker-compose.traefik.yml up -d
+#
+# Then point your proxy at the `builder-ui` service, port 80, for your domain.
+# Nothing is published on a host port. builder-ui's nginx routes /api, /_ and
+# /webhook to pocketbase and bot-service internally.
+#
+# Plain Traefik: uncomment the labels below and set the network name.
+# Dokploy: create a Compose app from this file, add your domain on builder-ui:80.
+# =============================================================================
+
+x-chatkit-image: &pull
+  pull_policy: always
+  restart: unless-stopped
+
+services:
+  pocketbase:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/pocketbase:${CHATKIT_TAG:-latest}
+    environment:
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:?set PB_ADMIN_EMAIL in .env}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?set PB_ADMIN_PASSWORD in .env}
+    volumes:
+      - pb_data:/pb_data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  bot-service:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/bot-service:${CHATKIT_TAG:-latest}
+    environment:
+      PORT: "3001"
+      PB_URL: http://pocketbase:8090
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD}
+      BOT_SERVICE_URL: ${BOT_SERVICE_URL:-https://${DOMAIN:?set DOMAIN in .env}}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+
+  builder-ui:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/builder-ui:${CHATKIT_TAG:-latest}
+    depends_on:
+      - pocketbase
+      - bot-service
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.chatkit.rule=Host(`${DOMAIN}`)
+    #   - traefik.http.routers.chatkit.entrypoints=websecure
+    #   - traefik.http.routers.chatkit.tls.certresolver=letsencrypt
+    #   - traefik.http.services.chatkit.loadbalancer.server.port=80
+    # networks: [default, proxy]
+
+# networks:
+#   proxy:
+#     external: true
+#     name: traefik   # the network your Traefik container is on
+
+volumes:
+  pb_data:

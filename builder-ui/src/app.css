@@ -1,0 +1,15 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+@plugin "daisyui/theme" {
+  name: "autumn";
+  default: false;
+}
+@plugin "daisyui/theme" {
+  name: "dark";
+  default: false;
+}
+@plugin "daisyui/theme" {
+  name: "nord";
+  default: false;
+}

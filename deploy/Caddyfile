@@ -1,0 +1,12 @@
+# Caddy — automatic HTTPS for ChatKit.
+# $DOMAIN comes from .env. Caddy fetches and renews the Let's Encrypt
+# certificate itself (ports 80 + 443 must be reachable from the internet).
+#
+# All path routing (/api → pocketbase or bot-service, /webhook → bot-service,
+# everything else → the builder app) happens in builder-ui's nginx, so Caddy
+# only needs to forward everything to it.
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy builder-ui:80
+}

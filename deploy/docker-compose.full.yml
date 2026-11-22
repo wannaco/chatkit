@@ -1,0 +1,153 @@
+# =============================================================================
+# ChatKit + Chatwoot — everything on one server, automatic HTTPS
+#
+#   cp .env.full.example .env   # then edit every value marked CHANGE ME
+#   docker compose -f docker-compose.full.yml up -d
+#
+# Two domains, both pointed (A record) at this server:
+#   CHATWOOT_DOMAIN  → Chatwoot (agents' inbox, widget, API)
+#   DOMAIN           → ChatKit builder + bot webhooks
+#
+# On first start `chatwoot-migrate` creates the Chatwoot database, then exits.
+# Open https://$CHATWOOT_DOMAIN to create the first Chatwoot admin account.
+#
+# Already running Chatwoot? Use docker-compose.yml instead.
+# =============================================================================
+
+x-chatkit-image: &pull
+  pull_policy: always
+  restart: unless-stopped
+
+x-chatwoot: &chatwoot
+  image: chatwoot/chatwoot:${CHATWOOT_VERSION:-latest}
+  restart: unless-stopped
+  env_file: .env
+  environment: &chatwoot-env
+    NODE_ENV: production
+    RAILS_ENV: production
+    INSTALLATION_ENV: docker
+    RAILS_LOG_TO_STDOUT: "true"
+    FRONTEND_URL: https://${CHATWOOT_DOMAIN}
+    POSTGRES_HOST: chatwoot-postgres
+    POSTGRES_USERNAME: postgres
+    POSTGRES_DATABASE: chatwoot_production
+    REDIS_URL: redis://chatwoot-redis:6379
+  volumes:
+    - chatwoot_storage:/app/storage
+
+services:
+  # ─── Reverse proxy ───────────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      CHATWOOT_DOMAIN: ${CHATWOOT_DOMAIN:?set CHATWOOT_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.full:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - builder-ui
+      - chatwoot-rails
+
+  # ─── Chatwoot ────────────────────────────────────────────────────────────────
+  chatwoot-migrate:
+    <<: *chatwoot
+    restart: "no"
+    command: ["bundle", "exec", "rails", "db:chatwoot_prepare"]
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+      chatwoot-redis:
+        condition: service_healthy
+
+  chatwoot-rails:
+    <<: *chatwoot
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    depends_on:
+      chatwoot-migrate:
+        condition: service_completed_successfully
+
+  chatwoot-sidekiq:
+    <<: *chatwoot
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    depends_on:
+      chatwoot-migrate:
+        condition: service_completed_successfully
+
+  chatwoot-postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: chatwoot_production
+    volumes:
+      - chatwoot_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chatwoot-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - chatwoot_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── ChatKit ─────────────────────────────────────────────────────────────────
+  pocketbase:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/pocketbase:${CHATKIT_TAG:-latest}
+    environment:
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:?set PB_ADMIN_EMAIL in .env}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?set PB_ADMIN_PASSWORD in .env}
+    volumes:
+      - pb_data:/pb_data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  bot-service:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/bot-service:${CHATKIT_TAG:-latest}
+    # Deliberately NOT env_file: .env — that file holds Chatwoot's
+    # SECRET_KEY_BASE and database password, which ChatKit does not need.
+    environment:
+      PORT: "3001"
+      PB_URL: http://pocketbase:8090
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD}
+      BOT_SERVICE_URL: https://${DOMAIN}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+
+  builder-ui:
+    <<: *pull
+    image: ${CHATKIT_IMAGE_PREFIX:-ghcr.io/wannaco/chatkit}/builder-ui:${CHATKIT_TAG:-latest}
+    depends_on:
+      - pocketbase
+      - bot-service
+
+volumes:
+  chatwoot_storage:
+  chatwoot_postgres:
+  chatwoot_redis:
+  pb_data:
+  caddy_data:
+  caddy_config:
